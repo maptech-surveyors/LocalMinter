@@ -24,7 +24,7 @@ function start() {
   generationInfoShow();
 
   if (typeof(worker) == "undefined") {
-    worker = new Worker("js/generator-worker.js");
+    worker = new Worker("minter/js/generator-worker.js");
     worker.postMessage({
       rule: inEl.value,
       mode: document.querySelector('input[name="mode"]:checked').value,
