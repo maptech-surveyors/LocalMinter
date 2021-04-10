@@ -1,0 +1,255 @@
+/**
+ * Advertisement page specific JS
+ *
+ * Page exposes: window.ad.adPrice
+ */
+
+(function($) {
+
+    "use strict";
+
+    var BTC_ACCURACY = 8;
+
+    var FIAT_ACCURACY = 2;
+
+    /**
+     * Colorize Send trade request form input boxes if the asked amount is too high/too low
+     */
+    function isInsideLimits (fiatmoney) {
+
+        var minamount = window.ad.amountMin || 0;
+        var maxamount = window.ad.amountMax || Number.MAX_SAFE_INTEGER;
+
+        if(minamount === null && maxamount === null) {
+            // Ad doesn't have min or max buying limits
+            return 0;
+        }
+
+        if(maxamount === 0) {
+            return 0;
+        }
+
+        // Only maximum given
+        if(minamount === null && maxamount !== null) {
+            if (fiatmoney > maxamount) {
+                return 1;
+            }
+            return 0;
+        }
+
+        if(minamount !== null && maxamount === null) {
+            if (fiatmoney < minamount) {
+                return -1;
+            }
+            return 0;
+        }
+
+        if (fiatmoney > maxamount) {
+            return 1;
+        }
+        if (fiatmoney < minamount) {
+            return -1;
+        }
+        return 0;
+    }
+
+    // http://stackoverflow.com/questions/23221557/restrict-to-2-decimal-places-in-keypress-of-a-text-box
+    function validateFloatKeyPress(evt) {
+        var el = this;
+        var charCode = (evt.which) ? evt.which : event.keyCode;
+        var number = el.value.split('.');
+        if (charCode != 46 && charCode > 31 && (charCode < 48 || charCode > 57)) {
+            return false;
+        }
+        //just one dot
+        if(number.length>1 && charCode == 46){
+             return false;
+        }
+        //get the carat position
+        var caratPos = getSelectionStart(el);
+        var dotPos = el.value.indexOf(".");
+        if( caratPos > dotPos && dotPos>-1 && (number[1].length >= BTC_ACCURACY)){
+            return false;
+        }
+        return true;
+    }
+
+    //thanks: http://javascript.nwbox.com/cursor_position/
+    function getSelectionStart(o) {
+        if (o.createTextRange) {
+            var r = document.selection.createRange().duplicate()
+            r.moveEnd('character', o.value.length)
+            if (r.text == '') return o.value.length
+            return o.value.lastIndexOf(r.text)
+        } else return o.selectionStart
+    }
+
+    function init() {
+
+        function validate(fiatmoney) {
+            var hasError = false;
+            var input = $("#amountinput");
+            var insideLimits = 0;
+
+            if(!isFinite(fiatmoney)) {
+                fiatmoney = 0;
+                hasError = true;
+            }
+
+            if (!hasError) {
+                insideLimits = isInsideLimits (fiatmoney);
+                hasError = insideLimits != 0;
+            }
+
+            if (!hasError){
+                $('#over_max_error').hide();
+                $('#under_min_error').hide();
+                if(fiatmoney > 0) {
+                    $("#amountinput").addClass("form-group form-control amount-success");
+                    $("#amountinput").removeClass("amount-error");
+                    $("#trade_request_button").prop("disabled", false);
+                }
+            } else {
+                if (input.val() === '') {
+                    $("#amountinput").removeClass("amount-success");
+                    $("#amountinput").removeClass("amount-error");
+                    $('#over_max_error').hide();
+                    $('#under_min_error').hide();
+                } else {
+                    $("#amountinput").addClass("form-group form-control amount-error");
+                    $("#amountinput").removeClass("amount-success");
+                    if (insideLimits < 0) {
+                        $('#over_max_error').hide();
+                        $('#under_min_error').show();
+                    } else if (insideLimits > 0) {
+                        $('#under_min_error').hide();
+                        $('#over_max_error').show();
+                    }
+                }
+                $("#trade_request_button").prop("disabled", true);
+            }
+        }
+
+        function updateAmountInput(event) {
+            if (event && ([9, 16, 37, 38, 39, 40].indexOf(event.which) !== -1)) {
+                return; // Ignore tab events and arrow keys
+            }
+            var input = $("#amountinput");
+
+            var value = input.val();
+            if (value.indexOf(',') > -1) {
+              input.val(value.replace(/,/g,''));
+            }
+
+            // removes input's commas, parses its value to a float, and fixes it to given accuracy
+            var fiatmoney = parseFloat(value.replace(/,/g,'')).toFixed(FIAT_ACCURACY);
+            validate(fiatmoney);
+            if (!isFinite(fiatmoney)){
+                fiatmoney = 0;
+            }
+            $("#amountbuy").text(fiatmoney);
+            var bitcoinamount = (fiatmoney/window.ad.adPriceFloat).toFixed(BTC_ACCURACY);
+            $("#btcinput").val(bitcoinamount);
+
+        }
+
+        $("#btcinput").on("keyup", (function(event) {
+            if (event && ([9, 16, 37, 38, 39, 40].indexOf(event.which) !== -1)) {
+                return; // Ignore tab events and arrow keys
+            }
+            var bitcoinamountFloat = parseFloat($(this).val());
+            var bitcoinamount = bitcoinamountFloat.toFixed(BTC_ACCURACY);
+
+            if(!isFinite(bitcoinamount)) {
+                bitcoinamount = 0;
+            }
+
+            var fiatmoney = (bitcoinamount*window.ad.adPriceFloat).toFixed(FIAT_ACCURACY);
+            $("#amountinput").val(fiatmoney);
+            validate(fiatmoney);
+        }));
+
+        $("#btcinput").on("keypress", validateFloatKeyPress);
+
+        $('#amountinput').bind('input propertychange', updateAmountInput);
+
+        // Update initial calculation from GET parameter
+        if($("#amountinput").val()) {
+            updateAmountInput();
+        }
+
+        if ($("#amountinput").prop("type") == 'select-one')
+        {
+            $("#btcinput").prop('readonly', true);
+            $("#amountinput").change(function(){
+                updateAmountInput();
+            }).change();
+        }
+        else
+        {
+            $("#amountinput").on("keyup", updateAmountInput);
+        }
+
+        // Update the ad price in every 10 minutes via ajax.
+        setInterval(function () {
+            refresh_ad_price();
+        }, 10*60*1000);
+
+        function refresh_ad_price(){
+            // Refresh the price
+            var ad_id = window.ad.id;
+
+            if(!ad_id) {
+                return;
+            }
+
+            $('#ad_price').html("<i class='icon-spin icon-spinner'></i> updating price");
+            $.ajax({url: "/ad_price_refresh/" + ad_id}).done(function(data) {
+                if(data) {
+                    $('#ad_price').html(data.price + " " + data.currency + " / BTC");
+                    window.ad.adPrice = data.price;
+                    window.ad.adPriceFloat = parseFloat(data.price);
+                    updateAmountInput();
+                } else {
+                    $('#ad_price').html("<strong class='warning'>Could not update the price. Try to reload the page.</strong>");
+                }
+            });
+        }
+    }
+
+    function goSocial() {
+
+        // Facebook
+        (function(d, s, id) {
+          var js, fjs = d.getElementsByTagName(s)[0];
+          if (d.getElementById(id)) return;
+          js = d.createElement(s); js.id = id;
+          js.src = "//connect.facebook.net/en_GB/all.js#xfbml=1";
+          fjs.parentNode.insertBefore(js, fjs);
+        }(document, 'script', 'facebook-jssdk'));
+
+        // Twitter
+        (function (d, s, id) {
+            var js,fjs=d.getElementsByTagName(s)[0];
+            if(!d.getElementById(id)){js=d.createElement(s);
+                js.id=id;
+                js.src="https://platform.twitter.com/widgets.js";
+                fjs.parentNode.insertBefore(js,fjs);
+            }
+        })(document, "script", "twitter-wjs");
+
+        // G+
+        (function() {
+            var po = document.createElement('script'); po.type = 'text/javascript'; po.async = true;
+            po.src = 'https://apis.google.com/js/plusone.js';
+            var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(po, s);
+        })();
+    }
+
+    $(init);
+
+    // Don't start loading heavy social JS files until the other parts of
+    // the pages are full loaded
+    $(window).load(goSocial);
+
+})(jQuery);
